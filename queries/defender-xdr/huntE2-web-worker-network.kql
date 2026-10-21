@@ -3,6 +3,7 @@
 // WHY  : reverse shells and payload downloads after PHP2Shell RCE. PHP legitimately calls APIs on 443/80 and databases on
 //        private IPs, so Part A excludes those; Part B (child of web worker) is high-signal on any port.
 let WebWorkerRegex = @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|php(\.exe)?|lsphp[\d]*|litespeed|lshttpd|frankenphp|apache2|apache(\.exe)?|httpd(\.exe)?|w3wp\.exe)$";
+// ^ NOT exhaustive: run the discovery queries 2 and 3 in row09-running-php-vs-mod-php.kql and add any other web server / PHP worker names here.
 let ChildTools = dynamic(["sh", "bash", "dash", "zsh", "python", "python3", "perl", "ruby", "curl", "wget", "nc", "ncat", "netcat", "socat", "cmd.exe", "powershell.exe", "pwsh.exe", "certutil.exe", "bitsadmin.exe"]);
 DeviceNetworkEvents
 | where Timestamp > ago(30d)

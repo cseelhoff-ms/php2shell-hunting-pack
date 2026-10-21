@@ -5,6 +5,7 @@
 // TUNE : CMS updates (WordPress/Drupal plugin installs) legitimately make a web worker write .php files. Expect noise
 //        under */wp-content/upgrade/*, */wp-content/plugins/*, */sites/default/files/php/*, vendor/ and cache/ paths.
 let WebWorkerRegex = @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|php(\.exe)?|lsphp[\d]*|litespeed|lshttpd|frankenphp|apache2|apache(\.exe)?|httpd(\.exe)?|w3wp\.exe)$";
+// ^ NOT exhaustive: run the discovery queries 2 and 3 in row09-running-php-vs-mod-php.kql and add any other web server / PHP worker names here.
 let PhpExt = @"(?i)\.(php[3-8]?|phtml|pht|phar|inc)$";
 let Created = DeviceFileEvents
     | where Timestamp > ago(30d)

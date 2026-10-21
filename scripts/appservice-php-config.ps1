@@ -11,3 +11,6 @@ $rows = foreach ($sub in (az account list --query "[].id" -o tsv)) {
 }
 $rows | Export-Csv -NoTypeInformation appservice-php.csv
 $rows | Format-Table -AutoSize
+# The filter above is not exhaustive (it only keeps PHP/WORDPRESS/DOCKER runtimes). Distinct runtimes of the matched apps are below;
+# for the distinct runtimes of ALL apps, run Query 2 in queries/resource-graph/row03-appservice-php-runtimes.kql.
+$rows | Group-Object LinuxFx, WindowsPhp | Sort-Object Count -Descending | Select-Object Count, Name | Format-Table -AutoSize

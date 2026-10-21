@@ -33,3 +33,20 @@ union ApacheRunning, PhpWorkersRunning
     "4-REVIEW: Apache running, no mod_php package seen (may use FPM on another host, or bundled PHP)")
 | project DeviceName, Classification, ModPhpPackages, ApacheLastSeen, PhpWorkerBinaries, PhpPaths, PhpFileVersions, PhpLastSeen, DeviceId
 | order by Classification asc, DeviceName asc
+
+// ---- Query 2: DISTINCT processes that mention PHP (run separately) ----
+// The process names above are NOT exhaustive. Review this list for other PHP launchers/workers (Docker entrypoints, supervisord, custom wrappers)
+// and add them to the query above and to WebWorkerRegex in Hunts B, E1 and E2.
+// DeviceProcessEvents
+// | where Timestamp > ago(30d)
+// | where FileName has "php" or ProcessCommandLine has "php"
+// | summarize Devices = dcount(DeviceId), Executions = count(), Folders = make_set(FolderPath, 3), SampleCmd = take_any(ProcessCommandLine) by FileName
+// | order by Devices desc
+
+// ---- Query 3: DISTINCT processes accepting inbound web traffic (run separately) ----
+// Finds web servers you did not list (Caddy, Traefik, LiteSpeed, Tomcat, custom). Coverage of inbound events varies by OS, so treat as leads.
+// DeviceNetworkEvents
+// | where Timestamp > ago(30d)
+// | where ActionType == "InboundConnectionAccepted" and LocalPort in (80, 443, 8000, 8080, 8443, 8888)
+// | summarize Devices = dcount(DeviceId), Connections = count() by InitiatingProcessFileName
+// | order by Devices desc

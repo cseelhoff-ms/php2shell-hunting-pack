@@ -120,6 +120,17 @@ resources
 | order by Note asc, name asc
 ```
 
+Query 2 (run separately) - distinct runtimes across **all** apps. The filter above only recognises known PHP runtimes, so review this list for other PHP-based stacks:
+
+```kql
+resources
+| where type =~ "microsoft.web/sites"
+| extend linuxFx = tostring(properties.siteConfig.linuxFxVersion), winPhp = tostring(properties.siteConfig.phpVersion)
+| summarize Apps = count(), Examples = make_set(name, 5)
+    by Runtime = iff(isnotempty(linuxFx), linuxFx, iff(isnotempty(winPhp), strcat("Windows PHP ", winPhp), "(none reported)"))
+| order by Apps desc
+```
+
 PowerShell fallback (terminal; needs `az login`, Reader is enough; writes `appservice-php.csv`):
 
 ```powershell
@@ -251,6 +262,30 @@ DeviceTvmSoftwareInventory
 | order by Status asc, DeviceName asc
 ```
 
+The product lists above are **not exhaustive**. Also run these two discovery queries separately and review the results by hand.
+
+Query 2 - distinct PHP-named software:
+
+```kql
+DeviceTvmSoftwareInventory
+| where SoftwareName matches regex @"(?i)php"
+| summarize Devices = dcount(DeviceId), Versions = make_set(SoftwareVersion, 10) by SoftwareVendor, SoftwareName
+| order by Devices desc
+```
+
+Query 3 - distinct software on hosts that run a web server (catches WordPress/Drupal-style apps with no "php" in the package name):
+
+```kql
+let WebHosts = DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where FileName in~ ("apache2", "httpd", "httpd.exe", "nginx", "w3wp.exe", "litespeed", "lshttpd", "frankenphp", "php-cgi", "php-cgi.exe") or FileName startswith "php-fpm" or FileName startswith "lsphp"
+    | distinct DeviceId;
+DeviceTvmSoftwareInventory
+| where DeviceId in (WebHosts)
+| summarize Devices = dcount(DeviceId), Versions = make_set(SoftwareVersion, 5) by SoftwareVendor, SoftwareName
+| order by Devices desc
+```
+
 <a id="row-6"></a>
 ## Row 6 - Defender EASM (internet-facing)
 **Finds:** public sites running PHP or common PHP apps, including ones you did not know about.
@@ -261,6 +296,7 @@ DeviceTvmSoftwareInventory
 4. **Pass A:** **Framework Equals PHP**.
 5. **Pass B:** **Server Contains** `Apache`, `nginx`, `LiteSpeed`, `Microsoft-IIS` (PHP commonly sits behind these).
 6. **Pass C:** **Web Component Name Contains**, one value at a time: `WordPress`, `Drupal`, `Joomla`, `Magento`, `MediaWiki`, `Roundcube`, `phpMyAdmin`, `Nextcloud`, `Laravel`, `Symfony`, `WHMCS`, `cPanel`, `Plesk`, `Moodle`, `TYPO3`, `PrestaShop`, `OpenCart`, `phpBB`, `Matomo`, `SuiteCRM`. Freeform values are case-sensitive, so use **Contains**.
+7. These lists are **not exhaustive**. Build a distinct list too: clear the Pass A-C filters (keep only **State = Approved Inventory** and **Live = true**), **Export** the page assets, then list the distinct values of the web component / framework / server columns (Excel: **Data > Remove Duplicates** or a PivotTable; PowerShell: `Import-Csv .\easm.csv | Select-Object -ExpandProperty '<exact column header>' -Unique`). Review it for other PHP-based products and re-run Pass C with them.
 7. Also try **Web Component Name & Version**, and **Affected CVSS Score** >= 9 to see Microsoft-mapped CVEs (a dashboard for these CVEs is not confirmed).
 8. Switch to **Inventory > IP addresses**, filter **Banner Matches** `PHP/`.
 9. **Export** each result.
@@ -289,7 +325,7 @@ gh search code "image: php" --owner YOURORG --extension yaml --limit 200 --json 
 gh search code "require" --owner YOURORG --filename composer.json --limit 200 --json repository,path,url
 ```
 
-Add `| ConvertFrom-Json | Select-Object -ExpandProperty repository | Select-Object -ExpandProperty nameWithOwner -Unique` to get only repo names. `gh search code` is rate limited (about 10 requests per minute); wait between commands.
+Add `| ConvertFrom-Json | Select-Object -ExpandProperty repository | Select-Object -ExpandProperty nameWithOwner -Unique` to get only repo names. The keyword searches are **not exhaustive**; the `composer.json` search is the most general, so review its distinct repositories for PHP stacks the keywords missed. `gh search code` is rate limited (about 10 requests per minute); wait between commands.
 
 **No terminal?**
 - GitHub: go to https://github.com/search?type=code and paste `org:YOURORG "FROM php" path:Dockerfile`.
@@ -364,6 +400,28 @@ union ApacheRunning, PhpWorkersRunning
 | order by Classification asc, DeviceName asc
 ```
 
+The process-name lists are **not exhaustive**. Run these discovery queries separately, review the results, and add any new names to `WebWorkerRegex` in Hunts B, E1 and E2.
+
+Query 2 - distinct processes that mention PHP:
+
+```kql
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where FileName has "php" or ProcessCommandLine has "php"
+| summarize Devices = dcount(DeviceId), Executions = count(), Folders = make_set(FolderPath, 3), SampleCmd = take_any(ProcessCommandLine) by FileName
+| order by Devices desc
+```
+
+Query 3 - distinct processes accepting inbound web traffic (finds web servers you did not list; inbound-event coverage varies by OS, so treat as leads):
+
+```kql
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where ActionType == "InboundConnectionAccepted" and LocalPort in (80, 443, 8000, 8080, 8443, 8888)
+| summarize Devices = dcount(DeviceId), Connections = count() by InitiatingProcessFileName
+| order by Devices desc
+```
+
 <a id="row-10"></a>
 ## Row 10 - nmap / httpx network fingerprint scan (complex, optional)
 **Finds:** internal web servers nothing else can see. Validation only; this is a project, not a quick check.
@@ -383,6 +441,10 @@ httpx -l targets.txt -ports 80,443,8000,8080,8443,8888 -td -server -title -sc -r
 
 # keep only PHP-ish hits
 jq -r 'select((.tech // [] | join(",")) | test("PHP|WordPress|Drupal|Joomla|Magento|MediaWiki|Roundcube|phpMyAdmin|Nextcloud|Laravel|Symfony|cPanel|Plesk";"i")) | [.url,.webserver,((.tech // [])|join(","))] | @tsv' httpx.json
+
+# the filter above is not exhaustive: list every distinct technology and web server found, then review for other PHP-based products
+jq -r '.tech[]?' httpx.json | sort | uniq -c | sort -rn
+jq -r '.webserver // empty' httpx.json | sort | uniq -c | sort -rn
 ```
 
 nmap (service detection + HTTP headers):
@@ -417,6 +479,7 @@ No separate query. Run Row 9 and take `Classification` 1 and 2 hosts, cross-matc
 ```kql
 // ---- Query 1: detections ----
 let WebWorkerRegex = @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|php(\.exe)?|lsphp[\d]*|litespeed|lshttpd|frankenphp|apache2|apache(\.exe)?|httpd(\.exe)?|w3wp\.exe)$";
+// ^ NOT exhaustive: run the discovery queries 2 and 3 in the row 9 section and add any other web server / PHP worker names here.
 let Shells = dynamic(["sh", "bash", "dash", "zsh", "ash", "ksh", "csh", "cmd.exe", "powershell.exe", "pwsh.exe", "pwsh"]);
 let Interpreters = dynamic(["python", "python2", "python3", "perl", "ruby", "node", "lua"]);
 let Fetchers = dynamic(["curl", "wget", "nc", "ncat", "netcat", "socat", "busybox", "tftp", "certutil.exe", "bitsadmin.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe"]);
@@ -599,6 +662,7 @@ AGWFirewallLogs
 
 ```kql
 let WebWorkerRegex = @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|php(\.exe)?|lsphp[\d]*|litespeed|lshttpd|frankenphp|apache2|apache(\.exe)?|httpd(\.exe)?|w3wp\.exe)$";
+// ^ NOT exhaustive: run the discovery queries 2 and 3 in the row 9 section and add any other web server / PHP worker names here.
 let PhpExt = @"(?i)\.(php[3-8]?|phtml|pht|phar|inc)$";
 let Created = DeviceFileEvents
     | where Timestamp > ago(30d)
@@ -624,6 +688,7 @@ Created
 
 ```kql
 let WebWorkerRegex = @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|php(\.exe)?|lsphp[\d]*|litespeed|lshttpd|frankenphp|apache2|apache(\.exe)?|httpd(\.exe)?|w3wp\.exe)$";
+// ^ NOT exhaustive: run the discovery queries 2 and 3 in the row 9 section and add any other web server / PHP worker names here.
 let ChildTools = dynamic(["sh", "bash", "dash", "zsh", "python", "python3", "perl", "ruby", "curl", "wget", "nc", "ncat", "netcat", "socat", "cmd.exe", "powershell.exe", "pwsh.exe", "certutil.exe", "bitsadmin.exe"]);
 DeviceNetworkEvents
 | where Timestamp > ago(30d)

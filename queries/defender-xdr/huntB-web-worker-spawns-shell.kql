@@ -7,6 +7,7 @@
 
 // ---- Query 1: detections ----
 let WebWorkerRegex = @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|php(\.exe)?|lsphp[\d]*|litespeed|lshttpd|frankenphp|apache2|apache(\.exe)?|httpd(\.exe)?|w3wp\.exe)$";
+// ^ NOT exhaustive: run the discovery queries 2 and 3 in row09-running-php-vs-mod-php.kql and add any other web server / PHP worker names here.
 let Shells = dynamic(["sh", "bash", "dash", "zsh", "ash", "ksh", "csh", "cmd.exe", "powershell.exe", "pwsh.exe", "pwsh"]);
 let Interpreters = dynamic(["python", "python2", "python3", "perl", "ruby", "node", "lua"]);
 let Fetchers = dynamic(["curl", "wget", "nc", "ncat", "netcat", "socat", "busybox", "tftp", "certutil.exe", "bitsadmin.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe"]);

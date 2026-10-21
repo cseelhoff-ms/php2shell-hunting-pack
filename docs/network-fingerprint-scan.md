@@ -20,6 +20,10 @@ httpx -l targets.txt -ports 80,443,8000,8080,8443,8888 -td -server -title -sc -r
 
 # keep only PHP-ish hits
 jq -r 'select((.tech // [] | join(",")) | test("PHP|WordPress|Drupal|Joomla|Magento|MediaWiki|Roundcube|phpMyAdmin|Nextcloud|Laravel|Symfony|cPanel|Plesk";"i")) | [.url,.webserver,((.tech // [])|join(","))] | @tsv' httpx.json
+
+# The app list above is NOT exhaustive. List every distinct technology and web server seen, then review it for other PHP-based products
+jq -r '.tech[]?' httpx.json | sort | uniq -c | sort -rn
+jq -r '.webserver // empty' httpx.json | sort | uniq -c | sort -rn
 ```
 
 nmap (service detection + HTTP headers):

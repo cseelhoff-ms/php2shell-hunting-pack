@@ -30,3 +30,13 @@ resources
     "Review")
 | project name, resourceGroup, subscriptionId, location, kindStr, Runtime, Note, defaultHostName = tostring(properties.defaultHostName), id
 | order by Note asc, name asc
+
+// ---- Query 2: DISTINCT runtimes across ALL App Services (run separately) ----
+// The filter above only recognises PHP|, WORDPRESS| and container runtimes. This lists every distinct runtime string and its app count,
+// so you can spot other PHP-based stacks that Query 1 does not match.
+// resources
+// | where type =~ "microsoft.web/sites"
+// | extend linuxFx = tostring(properties.siteConfig.linuxFxVersion), winPhp = tostring(properties.siteConfig.phpVersion)
+// | summarize Apps = count(), Examples = make_set(name, 5)
+//     by Runtime = iff(isnotempty(linuxFx), linuxFx, iff(isnotempty(winPhp), strcat("Windows PHP ", winPhp), "(none reported)"))
+// | order by Apps desc

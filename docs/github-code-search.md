@@ -24,6 +24,8 @@ gh search code "image: php" --owner YOURORG --extension yaml --limit 200 --json 
 gh search code "require" --owner YOURORG --filename composer.json --limit 200 --json repository,path,url
 ```
 
+The `composer.json` search is the most general: any PHP project that uses Composer has one, so it catches frameworks and apps not named above. The keyword searches are not exhaustive. Also list the distinct repositories each search returns and review them for other PHP stacks (for example `gh search code "FROM php" --owner YOURORG --filename Dockerfile --limit 200 --json repository | jq -r '.[].repository.nameWithOwner' | sort -u`).
+
 Add `| ConvertFrom-Json | Select-Object -ExpandProperty repository | Select-Object -ExpandProperty nameWithOwner -Unique` to get just repo names.
 `gh search code` has an API rate limit (about 10 requests per minute); wait between commands.
 

@@ -32,3 +32,22 @@ DeviceTvmSoftwareInventory
 | extend VendorPackaged = SoftwareVersion matches regex @"(?i)(ubuntu|deb\d|el\d|\.fc\d|~|\+)"
 | project DeviceName, OSPlatform, SoftwareName, SoftwareVersion, Role, Status, VendorPackaged, EndOfSupportStatus, DeviceId
 | order by Status asc, DeviceName asc
+
+// ---- Query 2: DISTINCT PHP-named software (run separately) ----
+// The Role list above (phpmyadmin, phpbb, ...) is NOT exhaustive. Review this list and add any other PHP application or package.
+// DeviceTvmSoftwareInventory
+// | where SoftwareName matches regex @"(?i)php"
+// | summarize Devices = dcount(DeviceId), Versions = make_set(SoftwareVersion, 10) by SoftwareVendor, SoftwareName
+// | order by Devices desc
+
+// ---- Query 3: DISTINCT software on hosts that run a web server (run separately) ----
+// PHP apps such as WordPress, Drupal or Joomla often do not have "php" in the package name, so Query 2 misses them.
+// This lists every distinct package on devices where Apache/nginx/php-fpm/IIS started in the last 30 days. Review it by hand.
+// let WebHosts = DeviceProcessEvents
+//     | where Timestamp > ago(30d)
+//     | where FileName in~ ("apache2", "httpd", "httpd.exe", "nginx", "w3wp.exe", "litespeed", "lshttpd", "frankenphp", "php-cgi", "php-cgi.exe") or FileName startswith "php-fpm" or FileName startswith "lsphp"
+//     | distinct DeviceId;
+// DeviceTvmSoftwareInventory
+// | where DeviceId in (WebHosts)
+// | summarize Devices = dcount(DeviceId), Versions = make_set(SoftwareVersion, 5) by SoftwareVendor, SoftwareName
+// | order by Devices desc
