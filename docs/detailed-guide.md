@@ -338,7 +338,7 @@ Add `| ConvertFrom-Json | Select-Object -ExpandProperty repository | Select-Obje
 **Finds:** PHP binaries TVM sees on disk (XAMPP, cPanel EasyApache, Plesk, vendor appliances).
 
 1. **security.microsoft.com > Hunting > Advanced hunting > + New query**, paste the query, **Run query**.
-2. Also check the NCSC-NL list of PHP-dependent software (github.com/NCSC-NL, folder `software/`) against your product inventory.
+2. Then run the NCSC product match in the second query below. It uses the NCSC-NL list of PHP-dependent products (refreshed daily into this repo's `data/ncsc-php-products.csv` from NCSC-NL's SPDX file) and matches it against MDE software inventory. Results are leads: names match by keyword and most NCSC entries are "Investigation", not confirmed vulnerable.
 3. The table is beta and lists only software TVM already recognises; unrecognised appliances need a vendor advisory.
 
 ```kql
@@ -359,6 +359,25 @@ DeviceTvmSoftwareEvidenceBeta
   ) on DeviceId
 | project DeviceName, OSPlatform, SoftwareNames, SoftwareVersions, Paths, DeviceId
 | order by DeviceName asc
+```
+
+NCSC product match (run separately). If your tenant blocks `externaldata`, run `pwsh scripts/ncsc-inventory-to-csv.ps1 -KqlFile ncsc-offline.kql` and paste that file instead (same query with the list inlined):
+
+```kql
+let Ncsc = externaldata(Keyword:string, Supplier:string, Product:string, Category:string, Version:string, Status109618:string, Status109619:string, Notes:string, Source:string)
+    [@"https://raw.githubusercontent.com/cseelhoff-ms/php2shell-hunting-pack/main/data/ncsc-php-products.csv"]
+    with (format="csv", ignoreFirstRecord=true);
+let Keywords = toscalar(Ncsc | summarize make_set(Keyword));
+let Installed = DeviceTvmSoftwareInventory
+    | where SoftwareName has_any (Keywords)
+    | project DeviceName, OSPlatform, SoftwareVendor, SoftwareName, SoftwareVersion, k = 1;
+Installed
+| join kind=inner (Ncsc | extend k = 1) on k
+| where SoftwareName has Keyword
+| summarize Devices = dcount(DeviceName), SampleDevices = make_set(DeviceName, 5), InstalledVersions = make_set(SoftwareVersion, 5)
+    by NcscProduct = Product, NcscSupplier = Supplier, Status109618, Status109619, NcscVersion = Version, SoftwareVendor, SoftwareName, Notes, Source
+| extend Priority = case(Status109618 == "Vulnerable" or Status109619 == "Vulnerable", 1, Status109618 == "Investigation" or Status109619 == "Investigation", 2, Status109618 == "Fix" and Status109619 == "Fix", 3, 4)
+| order by Priority asc, Devices desc
 ```
 
 <a id="row-9"></a>

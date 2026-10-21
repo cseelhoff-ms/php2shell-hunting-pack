@@ -1,0 +1,21 @@
+// Row 8 - NCSC-NL list of PHP-dependent products, matched against MDE software inventory (DeviceTvmSoftwareInventory).
+// Paste into security.microsoft.com > Investigation & response > Hunting > Advanced hunting, then Run query.
+// The list is read live from this repo's data/ncsc-php-products.csv (refreshed daily from NCSC-NL by a GitHub Action), so this query never needs editing.
+// If your tenant blocks externaldata URLs, generate an offline copy: pwsh scripts/ncsc-inventory-to-csv.ps1 -KqlFile ncsc-offline.kql
+// Results are LEADS: names are matched by keyword, and most NCSC entries are "Investigation", not confirmed vulnerable. Check each hit against the vendor advisory.
+// BEGIN-NCSC-SOURCE
+let Ncsc = externaldata(Keyword:string, Supplier:string, Product:string, Category:string, Version:string, Status109618:string, Status109619:string, Notes:string, Source:string)
+    [@"https://raw.githubusercontent.com/cseelhoff-ms/php2shell-hunting-pack/main/data/ncsc-php-products.csv"]
+    with (format="csv", ignoreFirstRecord=true);
+// END-NCSC-SOURCE
+let Keywords = toscalar(Ncsc | summarize make_set(Keyword));
+let Installed = DeviceTvmSoftwareInventory
+    | where SoftwareName has_any (Keywords)
+    | project DeviceName, OSPlatform, SoftwareVendor, SoftwareName, SoftwareVersion, k = 1;
+Installed
+| join kind=inner (Ncsc | extend k = 1) on k
+| where SoftwareName has Keyword
+| summarize Devices = dcount(DeviceName), SampleDevices = make_set(DeviceName, 5), InstalledVersions = make_set(SoftwareVersion, 5)
+    by NcscProduct = Product, NcscSupplier = Supplier, Status109618, Status109619, NcscVersion = Version, SoftwareVendor, SoftwareName, Notes, Source
+| extend Priority = case(Status109618 == "Vulnerable" or Status109619 == "Vulnerable", 1, Status109618 == "Investigation" or Status109619 == "Investigation", 2, Status109618 == "Fix" and Status109619 == "Fix", 3, 4)
+| order by Priority asc, Devices desc
