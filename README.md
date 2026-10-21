@@ -11,7 +11,7 @@ Top 10 ways to find vulnerable PHP assets for Microsoft customers, sorted from e
 - **Queries were not run against a live tenant.** Run each once, fix any schema differences, then save it.
 - Portal menu labels change often. Where a label is unverified, the step says so.
 - **Sentinel data is now queried in the Defender portal:** *security.microsoft.com > Investigation & response > Hunting > Advanced hunting* (workspace onboarded to the Defender portal, at least Microsoft Sentinel Reader). `DeviceTvm*` and `Device*` tables exist only in Defender XDR.
-- Do **not** run the public PoC against production systems.
+- Do **not** run the public PoC for this exploit against production systems.
 
 ## Repository layout
 
