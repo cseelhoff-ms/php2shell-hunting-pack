@@ -1,7 +1,5 @@
 # PHP2Shell Hunting Pack (CVE-2026-109618 / CVE-2026-109619)
 
-Huge props to **Caleb Seelhoff** for putting this together quickly in response to PHP2Shell.
-
 Top 10 ways to find vulnerable PHP assets for Microsoft customers, sorted from easiest to most complex, plus hunts for attempted or successful exploitation. Every row links to a copy-paste-ready query or runbook in this repo.
 
 > **Background:** [PHP2Shell: AI uncovers critical RCE vulnerabilities affecting 70% of the Internet (Wiz)](https://www.wiz.io/blog/php2shell-php-rce)
