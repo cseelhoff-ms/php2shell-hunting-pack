@@ -539,7 +539,7 @@ DeviceProcessEvents
 2. **Resources** tab: add the Linux web servers (Azure Monitor Agent installs automatically).
 3. **Collect and deliver** tab > **Add data source** > data source type **Linux Syslog**. Tick facilities `kern`, `daemon`, `user`, `local0`-`local7`, and set **Minimum log level = Warning**. (kern = segfaults and the OOM killer; daemon = systemd/php-fpm unit messages; localN/user = apps configured to use syslog.)
 4. Destination: **Azure Monitor Logs** > your Sentinel workspace > **Save**.
-5. Verify: workspace > **Logs > Tables > Virtual machines** > click **Run** beside **Syslog**.
+5. Verify (allow 10-15 minutes): in **security.microsoft.com > Investigation & response > Hunting > Advanced hunting**, run `Syslog | where TimeGenerated > ago(1h) | summarize Events = count() by Computer, Facility, SeverityLevel`. Rows for your web servers mean collection works; no rows means check the DCR **Resources** tab and the Azure Monitor Agent on the server. Alternative: Azure portal > your Log Analytics workspace > **Logs > Tables > Virtual machines**, hover **Syslog**, click **Run**.
 
 **Step 2 - run the query:** **security.microsoft.com > Investigation & response > Hunting > Advanced hunting**, paste Query 1, **Run query**. (Fallback: portal.azure.com > Log Analytics workspace > Logs.) If both a time-range dropdown and a `TimeGenerated` filter are present, the dropdown wins.
 

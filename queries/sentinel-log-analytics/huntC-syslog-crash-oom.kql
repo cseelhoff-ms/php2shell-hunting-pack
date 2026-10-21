@@ -14,7 +14,8 @@
 //      Tick facilities  kern, daemon, user, local0-local7  and set Minimum log level = Warning
 //      (kern = segfaults and the OOM killer; daemon = systemd/php-fpm unit messages; localN/user = apps configured to use syslog).
 //   4. Destination: Azure Monitor Logs > your Sentinel workspace > Save.
-//   5. Verify: workspace > Logs > Tables > Virtual machines > click Run beside Syslog.
+//   5. Verify (allow 10-15 minutes): run  Syslog | where TimeGenerated > ago(1h) | summarize Events = count() by Computer, Facility, SeverityLevel
+//      Rows for your web servers mean collection works. (Alternative: Azure portal > Log Analytics workspace > Logs > Tables > Virtual machines > hover Syslog > Run.)
 //
 // IMPORTANT LIMIT: Apache/php-fpm write their OWN error logs by default (/var/log/apache2/error.log,
 //   /var/log/php*-fpm.log), not to syslog. Kernel segfault/OOM lines DO reach Syslog. Apache/PHP lines only reach Syslog if
