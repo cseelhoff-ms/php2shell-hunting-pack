@@ -1,0 +1,36 @@
+// HUNT B - Web/PHP worker process spawning a shell, interpreter, downloader or recon command (post-exploitation)
+// WHERE: security.microsoft.com > Investigation & response > Hunting > Advanced hunting
+// WHY  : PHP shell_exec/system/exec/passthru/popen all run `sh -c -- <cmd>` (dash on Debian/Ubuntu, bash on RHEL).
+//        Code executing purely inside the PHP worker leaves NO process event, so absence is not proof of safety.
+// TUNE : legitimate apps spawn children too (git, composer, convert/magick, wkhtmltopdf, sendmail, cron wrappers).
+//        Run the baseline query at the bottom first and exclude known-good CommandLine patterns.
+
+// ---- Query 1: detections ----
+let WebWorkerRegex = @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|php(\.exe)?|lsphp[\d]*|litespeed|lshttpd|frankenphp|apache2|apache(\.exe)?|httpd(\.exe)?|w3wp\.exe)$";
+let Shells = dynamic(["sh", "bash", "dash", "zsh", "ash", "ksh", "csh", "cmd.exe", "powershell.exe", "pwsh.exe", "pwsh"]);
+let Interpreters = dynamic(["python", "python2", "python3", "perl", "ruby", "node", "lua"]);
+let Fetchers = dynamic(["curl", "wget", "nc", "ncat", "netcat", "socat", "busybox", "tftp", "certutil.exe", "bitsadmin.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe"]);
+let Recon = dynamic(["whoami", "id", "uname", "hostname", "ifconfig", "ipconfig", "ip", "netstat", "ss", "ps", "env", "cat", "ls", "find", "net.exe", "net1.exe", "systeminfo", "tasklist", "nltest.exe"]);
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where InitiatingProcessFileName matches regex WebWorkerRegex
+| extend Child = tolower(FileName)
+| extend Category = case(
+    Child in (Shells), "shell",
+    Child in (Interpreters), "interpreter",
+    Child in (Fetchers), "download/netcat/LOLBin",
+    Child in (Recon), "recon",
+    "other")
+| where Category != "other"
+| extend ReverseShellPattern = ProcessCommandLine matches regex @"(?i)(/dev/tcp/|/dev/udp/|mkfifo|fsockopen|bash\s+-i|\bnc(at)?\s+.*-e\b|socat\s+.*exec|python[\d.]*\s+-c\s+.*socket|perl\s+-e\s+.*socket|powershell.*(-enc|-encodedcommand|downloadstring|iex))")
+| extend Severity = case(ReverseShellPattern, "HIGH", Category in ("download/netcat/LOLBin", "interpreter"), "MEDIUM", "LOW")
+| project Timestamp, DeviceName, Severity, Category, ParentWorker = InitiatingProcessFileName, ParentCmd = InitiatingProcessCommandLine,
+          Child = FileName, ChildCmd = ProcessCommandLine, Account = AccountName, ReverseShellPattern, DeviceId, ReportId
+| order by Severity asc, Timestamp desc
+
+// ---- Query 2: baseline (run separately; use it to build exclusions for Query 1) ----
+// DeviceProcessEvents
+// | where Timestamp > ago(30d)
+// | where InitiatingProcessFileName matches regex @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|lsphp[\d]*|apache2|httpd(\.exe)?|w3wp\.exe)$"
+// | summarize Executions = count(), Devices = dcount(DeviceId), SampleCmd = take_any(ProcessCommandLine) by InitiatingProcessFileName, FileName
+// | order by Executions desc

@@ -1,0 +1,48 @@
+// HUNT C - Linux Syslog: crash / OOM / worker-churn signals consistent with PHP2Shell exploitation attempts
+//
+// WHERE TO RUN (verified against Microsoft Learn):
+//   security.microsoft.com > Investigation & response > Hunting > Advanced hunting
+//   (Requires the Log Analytics workspace to be onboarded to the Defender portal and at least Microsoft Sentinel Reader.
+//    Sentinel in the Azure portal is retired after 31 March 2027; its "Logs" blade maps to this page.)
+//   Alternative: portal.azure.com > Log Analytics workspace > Logs (plain Azure Monitor, always available).
+//   In Advanced hunting use the time-range dropdown rather than where TimeGenerated filters if both are present.
+//
+// PREREQUISITE - get Syslog flowing (otherwise the Syslog table is empty):
+//   1. Azure VM: portal.azure.com > Monitor > Data Collection Rules > Create. Non-Azure Linux: onboard with Azure Arc first.
+//   2. Resources tab: add the Linux web servers (Azure Monitor Agent installs automatically).
+//   3. Collect and deliver tab > Add data source > data source type "Linux Syslog".
+//      Tick facilities  kern, daemon, user, local0-local7  and set Minimum log level = Warning
+//      (kern = segfaults and the OOM killer; daemon = systemd/php-fpm unit messages; localN/user = apps configured to use syslog).
+//   4. Destination: Azure Monitor Logs > your Sentinel workspace > Save.
+//   5. Verify: workspace > Logs > Tables > Virtual machines > click Run beside Syslog.
+//
+// IMPORTANT LIMIT: Apache/php-fpm write their OWN error logs by default (/var/log/apache2/error.log,
+//   /var/log/php*-fpm.log), not to syslog. Kernel segfault/OOM lines DO reach Syslog. Apache/PHP lines only reach Syslog if
+//   you set `ErrorLog syslog:local7` (Apache) / `error_log = syslog` (php.ini) / `error_log = syslog` (php-fpm.conf).
+//   Otherwise collect the files with the Custom Text Logs DCR described in huntF2-apache-nginx-textlogs.kql.
+
+// ---- Query 1: signals ----
+Syslog
+| where TimeGenerated > ago(14d)
+| extend Signal = case(
+    SyslogMessage matches regex @"(?i)segfault at .+ in (libphp[\d.]*\.so|php-fpm[\d.]*|php-cgi|php[\d.]*|apache2|httpd)", "kernel segfault in PHP/Apache",
+    SyslogMessage matches regex @"(?i)Out of memory: Killed process \d+ \((php-fpm[\d.]*|php-cgi|php[\d.]*|apache2|httpd|lsphp[\d]*)\)", "OOM killer killed PHP/Apache worker",
+    SyslogMessage matches regex @"(?i)child pid \d+ exit signal", "Apache child exited on signal",
+    SyslogMessage matches regex @"(?i)child \d+ exited on signal \d+", "php-fpm child exited on signal",
+    SyslogMessage matches regex @"(?i)child \d+ exited with code (255|\d+) after [\d.]+ seconds from start", "php-fpm child exited right after start",
+    SyslogMessage matches regex @"(?i)Allowed memory size of \d+ bytes exhausted", "PHP memory_limit exhausted",
+    SyslogMessage matches regex @"(?i)Maximum execution time of \d+ seconds? exceeded", "PHP max_execution_time exceeded",
+    "")
+| where isnotempty(Signal)
+| summarize Events = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+            Sample = take_any(substring(SyslogMessage, 0, 300))
+    by Computer, Signal, bin(TimeGenerated, 1h)
+| order by Events desc
+
+// ---- Query 2: bursts (many worker deaths in 10 minutes on one host = exploitation or heavy abuse) ----
+// Syslog
+// | where TimeGenerated > ago(14d)
+// | where SyslogMessage matches regex @"(?i)(segfault at .+ in (libphp|php|apache2|httpd)|child pid \d+ exit signal|child \d+ exited on signal|Out of memory: Killed process \d+ \((php|apache2|httpd))"
+// | summarize Events = count(), Sample = take_any(substring(SyslogMessage, 0, 300)) by Computer, bin(TimeGenerated, 10m)
+// | where Events >= 5
+// | order by Events desc

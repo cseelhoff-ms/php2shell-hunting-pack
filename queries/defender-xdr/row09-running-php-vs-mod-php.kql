@@ -1,0 +1,35 @@
+// 04 - Which devices actually RUN PHP, and are they mod_php (highest risk) or php-fpm/php-cgi?
+// WHERE: security.microsoft.com > Investigation & response > Hunting > Advanced hunting
+// LIMITS:
+//  * DeviceProcessEvents only shows process START events. A web server that has been up longer than the retention
+//    window (30 days in Advanced hunting) will not appear - rely on 02/03 for installed-but-quiet hosts.
+//  * mod_php lives INSIDE the Apache process, so process events cannot prove it. "mod_php package installed AND Apache
+//    running" is the best proxy; an installed package may still be disabled (a2dismod php*).
+//  * Windows php-cgi.exe also exposes its version via ProcessVersionInfoProductVersion; Linux does not.
+let lookback = 30d;
+let ModPhpPackages = DeviceTvmSoftwareInventory
+    | where SoftwareName matches regex @"(?i)mod[-_]?php|libapache2-mod-php|libphp"
+    | summarize ModPhpPackages = make_set(strcat(SoftwareName, " ", SoftwareVersion)) by DeviceId;
+let ApacheRunning = DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FileName in~ ("apache2", "httpd", "httpd.exe", "apache2.exe", "apache.exe")
+    | summarize ApacheLastSeen = max(Timestamp), ApachePaths = make_set(FolderPath, 3) by DeviceId, DeviceName;
+let PhpWorkersRunning = DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FileName startswith "php-fpm" or FileName startswith "lsphp" or FileName in~ ("php-cgi", "php-cgi.exe", "frankenphp")
+    | summarize PhpWorkerBinaries = make_set(FileName), PhpPaths = make_set(FolderPath, 5),
+                PhpFileVersions = make_set(ProcessVersionInfoProductVersion), PhpLastSeen = max(Timestamp)
+      by DeviceId, DeviceName;
+union ApacheRunning, PhpWorkersRunning
+| distinct DeviceId, DeviceName
+| join kind=leftouter ApacheRunning on DeviceId
+| join kind=leftouter PhpWorkersRunning on DeviceId
+| join kind=leftouter ModPhpPackages on DeviceId
+| project-away DeviceId1, DeviceId2, DeviceId3, DeviceName1, DeviceName2
+| extend Classification = case(
+    isnotempty(ModPhpPackages) and isnotempty(ApacheLastSeen), "1-HIGHEST: Apache running + mod_php package installed",
+    isnotempty(PhpLastSeen), "2-HIGH: php-fpm / php-cgi / lsphp worker running (PHP-FPM needs an app code path to exploit)",
+    isnotempty(ModPhpPackages), "3-MEDIUM: mod_php installed, Apache not seen starting in window",
+    "4-REVIEW: Apache running, no mod_php package seen (may use FPM on another host, or bundled PHP)")
+| project DeviceName, Classification, ModPhpPackages, ApacheLastSeen, PhpWorkerBinaries, PhpPaths, PhpFileVersions, PhpLastSeen, DeviceId
+| order by Classification asc, DeviceName asc

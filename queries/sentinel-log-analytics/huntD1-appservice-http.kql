@@ -1,0 +1,50 @@
+// HUNT D1 - Azure App Service HTTP logs: PHP2Shell-shaped traffic
+//
+// PREREQUISITE (Azure portal):
+//   1. portal.azure.com > App Services > <your app> > Monitoring > Diagnostic settings > Add diagnostic setting.
+//   2. Tick the log category "App Service HTTP Logs" (table AppServiceHTTPLogs).
+//   3. Destination: "Send to Log Analytics workspace" > your Sentinel workspace > Save.
+//   (Do this per app, or enforce with Azure Policy "Deploy Diagnostic Settings for App Service to Log Analytics workspace".)
+//
+// WHERE TO RUN: security.microsoft.com > Investigation & response > Hunting > Advanced hunting
+//               (or workspace > Logs in the Azure portal).
+//
+// LIMITS (AppServiceHTTPLogs has NO Content-Type, NO request-body detail, NO response Set-Cookie). Therefore:
+//   - multipart cannot be identified directly; we use POST + large request + 5xx bursts as the heuristic
+//   - an oversized PHPSESSID response cookie (the Wiz memory-disclosure signal) cannot be seen here
+//   - the Cookie column is the REQUEST cookie only
+// Treat hits as leads to correlate with WAF logs (Hunt D2) and the app's own error log.
+// CsBytes = request bytes received, ScBytes = response bytes sent.
+
+// ---- Query 1: POST bursts producing server errors, per client IP ----
+AppServiceHTTPLogs
+| where TimeGenerated > ago(14d)
+| where CsMethod == "POST"
+| summarize
+    Posts = count(),
+    Err5xx = countif(ScStatus >= 500),
+    MaxRequestBytes = max(CsBytes),
+    MedianRequestBytes = percentile(CsBytes, 50),
+    Uris = make_set(CsUriStem, 5),
+    Hosts = make_set(CsHost, 3),
+    UserAgents = make_set(UserAgent, 3)
+  by CIp, bin(TimeGenerated, 5m)
+| where Err5xx >= 5 and MaxRequestBytes > 100000
+| order by Err5xx desc
+
+// ---- Query 2: pairs of POSTs from one IP within 10s where the second carries a session cookie (upload-progress trigger shape) ----
+// AppServiceHTTPLogs
+// | where TimeGenerated > ago(14d) and CsMethod == "POST"
+// | extend HasSession = Cookie has "PHPSESSID"
+// | summarize Posts = count(), WithSession = countif(HasSession), Err5xx = countif(ScStatus >= 500), Uris = make_set(CsUriStem, 5)
+//     by CIp, CsHost, bin(TimeGenerated, 10s)
+// | where Posts >= 2 and WithSession >= 1 and Err5xx >= 1
+// | order by TimeGenerated desc
+
+// ---- Query 3: unusually large request cookies (client replaying a bloated PHPSESSID) ----
+// AppServiceHTTPLogs
+// | where TimeGenerated > ago(14d)
+// | extend CookieLen = strlen(Cookie)
+// | where CookieLen > 1000
+// | summarize Requests = count(), MaxCookieLen = max(CookieLen), Uris = make_set(CsUriStem, 5) by CIp, CsHost
+// | order by MaxCookieLen desc

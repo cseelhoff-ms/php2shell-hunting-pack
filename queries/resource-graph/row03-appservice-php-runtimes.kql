@@ -1,0 +1,32 @@
+// Row 3 - Every App Service / Function app whose runtime is PHP, WordPress-on-App-Service or a custom container
+// WHERE: portal.azure.com > search "Resource Graph Explorer" > set Scope to "Directory" (whole tenant) > paste > Run query > Download as CSV
+//
+// LIMITS:
+//  * App Service exposes only major.minor for PHP (e.g. "PHP|8.3" / phpVersion "8.2"), never the patch level. You cannot tell
+//    from configuration whether the platform image already contains 8.3.36. Microsoft's "Latest" channel was still on 8.5.11 at
+//    disclosure (Microsoft Q&A) - watch github.com/Azure/app-service-announcements. Treat every row as in scope until confirmed.
+//  * Custom containers (linuxFxVersion starts with DOCKER|) are YOUR responsibility: take the image to Row 4 (4a / 4b) and
+//    to Defender for Containers findings.
+//  * If linuxFxVersion/phpVersion come back empty for apps you know exist, use scripts/appservice-php-config.ps1 (az webapp config show).
+resources
+| where type =~ "microsoft.web/sites"
+| extend kindStr = tostring(kind)
+| extend linuxFx = tostring(properties.siteConfig.linuxFxVersion)
+| extend winPhp = tostring(properties.siteConfig.phpVersion)
+| extend isLinux = kindStr contains "linux"
+| extend isContainer = linuxFx startswith "DOCKER|" or linuxFx startswith "COMPOSE|" or linuxFx startswith "KUBE|"
+| extend Runtime = case(
+    isContainer, "Custom container",
+    linuxFx startswith "PHP|", linuxFx,
+    linuxFx startswith "WORDPRESS|", linuxFx,
+    isnotempty(winPhp), strcat("Windows PHP ", winPhp),
+    "")
+| where isnotempty(Runtime)
+| extend MajorMinor = extract(@"(\d+\.\d+)", 1, Runtime)
+| extend Note = case(
+    isContainer, "Inspect the image: Row 4a/4b + Defender for Containers",
+    MajorMinor in ("5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1"), "EOL branch - no official fix",
+    MajorMinor in ("8.2", "8.3", "8.4", "8.5"), "Supported branch - confirm platform patch level (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12)",
+    "Review")
+| project name, resourceGroup, subscriptionId, location, kindStr, Runtime, Note, defaultHostName = tostring(properties.defaultHostName), id
+| order by Note asc, name asc

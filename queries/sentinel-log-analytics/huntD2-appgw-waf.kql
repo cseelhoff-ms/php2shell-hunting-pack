@@ -1,0 +1,44 @@
+// HUNT D2 - Azure Application Gateway (WAF) logs: multipart / request-body anomalies and 5xx bursts
+//
+// PREREQUISITE (Azure portal):
+//   portal.azure.com > Application gateways > <gateway> > Monitoring > Diagnostic settings > Add diagnostic setting
+//   Tick: "Application Gateway Access Log" and "Application Gateway Firewall Log"
+//   Destination: Log Analytics workspace, and choose "Resource specific" (so the tables below are AGWAccessLogs / AGWFirewallLogs).
+//   If you instead used the legacy "Azure diagnostics" destination, the data is in AzureDiagnostics with *_s/*_d suffixed
+//   columns and these queries will not run as written.
+//
+// WHERE TO RUN: security.microsoft.com > Investigation & response > Hunting > Advanced hunting (or workspace > Logs).
+//
+// LIMIT: I found no evidence (unverified) of a dedicated Azure WAF managed rule for CVE-2026-109618/109619. The signals below
+//   are generic. Cloudflare DOES have named rules (see docs/mitigations.md). Request body content is not logged by Azure WAF.
+
+// ---- Query 1: POST bursts that cause backend 5xx (large bodies + failures) per client ----
+AGWAccessLogs
+| where TimeGenerated > ago(14d)
+| where HttpMethod == "POST"
+| summarize
+    Posts = count(),
+    Backend5xx = countif(ServerStatus >= 500),
+    MaxReceivedBytes = max(ReceivedBytes),
+    Uris = make_set(RequestUri, 5),
+    Hosts = make_set(Host, 3),
+    WafModes = make_set(WafMode)
+  by ClientIp, bin(TimeGenerated, 5m)
+| where Backend5xx >= 5 and MaxReceivedBytes > 100000
+| order by Backend5xx desc
+
+// ---- Query 2: WAF events that mention multipart / body-parsing problems (OWASP CRS 200002 = body parse failure,
+//               200003 = multipart strict validation - confirm the IDs in your ruleset version) ----
+// AGWFirewallLogs
+// | where TimeGenerated > ago(14d)
+// | where RuleId in ("200002", "200003") or Message has "ultipart" or DetailedMessage has "ultipart"
+// | summarize Hits = count(), Actions = make_set(Action), Rules = make_set(RuleId), Uris = make_set(RequestUri, 5) by ClientIp, bin(TimeGenerated, 10m)
+// | order by Hits desc
+
+// ---- Query 3: join the two on TransactionId to see which flagged requests also hurt the backend ----
+// AGWFirewallLogs
+// | where TimeGenerated > ago(14d)
+// | where RuleId in ("200002", "200003") or Message has "ultipart"
+// | project TransactionId, RuleId, Message, WafAction = Action
+// | join kind=inner (AGWAccessLogs | where TimeGenerated > ago(14d) | project TransactionId, ClientIp, Host, RequestUri, HttpMethod, HttpStatus, ServerStatus, ReceivedBytes) on TransactionId
+// | order by ServerStatus desc

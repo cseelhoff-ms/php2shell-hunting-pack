@@ -1,0 +1,21 @@
+// Row 4a - Defender for Containers / MDVM registry-image findings that mention the PHP2Shell CVEs
+// WHERE: portal.azure.com > Resource Graph Explorer > Scope "Directory" > paste > Run query
+// BASED ON Microsoft's published sample (github.com/Azure/Microsoft-Defender-for-Cloud, Kusto/Azure Resource Graph/
+//   "List Container Registry Vulnerability Assessment Results"). The sample filters on assessment key
+//   dbd0cb49-b563-45e7-9724-889e799fa648; Microsoft is moving to individual recommendations, so this query does NOT hard-code the
+//   key and instead matches the CVE text anywhere in the sub-assessment.
+// REQUIRES: Defender for Containers (or Defender CSPM) with "Registry access" enabled, and Microsoft publishing detection for these CVEs.
+//   No rows = no finding, which is NOT the same as "no PHP"; run Row 4b as well.
+securityresources
+| where type == "microsoft.security/assessments/subassessments"
+| where tostring(properties) has_any ("CVE-2026-109618", "CVE-2026-109619")
+| parse id with registryResourceId "/providers/Microsoft.Security/assessments/" assessmentKey "/subassessments/" *
+| parse registryResourceId with * "/providers/Microsoft.ContainerRegistry/registries/" registryName
+| extend imageDigest = tostring(properties.additionalData.imageDigest),
+         repository = tostring(properties.additionalData.repositoryName)
+| project health = tostring(properties.status.code),
+          severity = tostring(properties.status.severity),
+          vulnId = tostring(properties.id),
+          displayName = tostring(properties.displayName),
+          registryName, repository, imageDigest, resourceGroup, subscriptionId, assessmentKey, registryResourceId
+| order by registryName asc, repository asc

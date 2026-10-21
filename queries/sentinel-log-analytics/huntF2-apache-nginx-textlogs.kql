@@ -1,0 +1,49 @@
+// 12 - Apache / nginx / php-fpm TEXT logs on Linux web servers, collected with a Custom Text Logs DCR
+// (use when error logs do not reach Syslog; also lets you add the HTTP fields the platform logs lack)
+//
+// STEP 1 - Create the destination custom table. Microsoft Learn: the table must already exist before the DCR is saved.
+//   portal.azure.com > Log Analytics workspaces > <workspace> > Settings > Tables > Create > New custom log (DCR-based).
+//   Table names used below: WebErrorLog_CL and WebAccessLog_CL. Minimum columns: TimeGenerated (datetime) and RawData (string).
+// STEP 2 - Data Collection Rule: Monitor > Data Collection Rules > Create > add the Linux servers (needs Azure Monitor Agent;
+//   Azure Arc for non-Azure) > Collect and deliver > Add data source > "Custom Text Logs".
+//   File pattern (only the file name and the first-level folder above it may contain wildcards):
+//     error log  : /var/log/apache2/error.log, /var/log/httpd/error_log, /var/log/php*-fpm.log, /var/log/nginx/error.log
+//     access log : /var/log/nginx/phpwatch.log, /var/log/apache2/phpwatch.log
+//   Table name : WebErrorLog_CL (errors) / WebAccessLog_CL (access)
+//   Record delimiter: TimeStamp, Time format: "YYYY-MM-DD HH:MM:SS" for the access log lines below (the Apache/PHP native
+//   timestamp formats are not in the supported list, so those files fall back to one record per line - that is fine).
+//   Destination: Azure Monitor Logs > your workspace. Files must be ASCII/UTF-8 and append-only; keep <=10 monitored directories.
+//
+// STEP 3 - Add a dedicated access-log format that records exactly what the PHP2Shell hunt needs
+//   nginx (inside http { } in /etc/nginx/nginx.conf), then `nginx -t && systemctl reload nginx`:
+//     map $sent_http_set_cookie $bigcookie { default 0; "~^.{200,}$" 1; }      # flags oversized Set-Cookie WITHOUT logging session IDs
+//     log_format phpwatch '$time_iso8601|$remote_addr|$request_method|$uri|$status|$request_length|$content_type|$http_transfer_encoding|$bigcookie';
+//     access_log /var/log/nginx/phpwatch.log phpwatch;
+//   Apache (needs mod_logio for %I), then `apachectl configtest && systemctl reload apache2`:
+//     LogFormat "%{%Y-%m-%d %H:%M:%S}t|%a|%m|%U|%>s|%I|%{Content-Type}i|%{Transfer-Encoding}i|-" phpwatch
+//     CustomLog /var/log/apache2/phpwatch.log phpwatch
+//   (Apache cannot cheaply flag an oversized Set-Cookie; the last field stays "-".)
+//   The nginx timestamp is ISO 8601; if it does not parse you still get ingestion time as TimeGenerated.
+//
+// WHERE TO RUN: security.microsoft.com > Investigation & response > Hunting > Advanced hunting (or workspace > Logs)
+
+// ---- Query 1: error-log signals ----
+WebErrorLog_CL
+| where TimeGenerated > ago(14d)
+| where RawData matches regex @"(?i)(Allowed memory size of \d+ bytes exhausted|Out of memory \(allocated|child \d+ exited on signal|child \d+ exited with code \d+ after [\d.]+ seconds from start|child pid \d+ exit signal|Maximum execution time of \d+ seconds? exceeded)"
+| summarize Events = count(), Sample = take_any(substring(RawData, 0, 300)) by bin(TimeGenerated, 1h)
+| order by Events desc
+
+// ---- Query 2: access-log fields: chunked/multipart POST failures and oversized Set-Cookie ----
+// WebAccessLog_CL
+// | where TimeGenerated > ago(14d)
+// | parse RawData with Ts "|" ClientIp "|" Method "|" Uri "|" Status:int "|" RequestLen:long "|" ContentType "|" TransferEncoding "|" BigCookie
+// | extend IsMultipart = ContentType has "multipart/form-data", IsChunked = TransferEncoding has "chunked"
+// | summarize Requests = count(),
+//             MultipartErrors = countif(IsMultipart and Status >= 500),
+//             ChunkedMultipart = countif(IsMultipart and IsChunked),
+//             BigSetCookie = countif(BigCookie == "1"),
+//             MaxRequestLen = max(RequestLen)
+//     by ClientIp, bin(TimeGenerated, 10m)
+// | where MultipartErrors >= 3 or ChunkedMultipart >= 1 or BigSetCookie >= 1
+// | order by MultipartErrors desc, BigSetCookie desc

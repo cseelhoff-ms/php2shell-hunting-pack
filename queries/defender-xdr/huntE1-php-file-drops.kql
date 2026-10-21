@@ -1,0 +1,26 @@
+// HUNT E1 - PHP files written by web workers, or dropped into temp locations (webshell / staged payload)
+// WHERE: security.microsoft.com > Investigation & response > Hunting > Advanced hunting
+// WHY  : Huntress observed PHP writing temporary PHP files, executing them, then deleting them (marker string !notwrtbl!).
+//        Content cannot be searched here, so hunt on the file events and the delete that follows.
+// TUNE : CMS updates (WordPress/Drupal plugin installs) legitimately make a web worker write .php files. Expect noise
+//        under */wp-content/upgrade/*, */wp-content/plugins/*, */sites/default/files/php/*, vendor/ and cache/ paths.
+let WebWorkerRegex = @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|php(\.exe)?|lsphp[\d]*|litespeed|lshttpd|frankenphp|apache2|apache(\.exe)?|httpd(\.exe)?|w3wp\.exe)$";
+let PhpExt = @"(?i)\.(php[3-8]?|phtml|pht|phar|inc)$";
+let Created = DeviceFileEvents
+    | where Timestamp > ago(30d)
+    | where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+    | where FileName matches regex PhpExt
+    | where InitiatingProcessFileName matches regex WebWorkerRegex
+         or FolderPath matches regex @"(?i)^(/tmp/|/var/tmp/|/dev/shm/|.*\\temp\\|.*\\appdata\\local\\temp\\)"
+    | project CreateTime = Timestamp, DeviceId, DeviceName, FolderPath, FileName, SHA1, Writer = InitiatingProcessFileName, WriterCmd = InitiatingProcessCommandLine;
+let Deleted = DeviceFileEvents
+    | where Timestamp > ago(30d)
+    | where ActionType == "FileDeleted"
+    | where FileName matches regex PhpExt
+    | project DeleteTime = Timestamp, DeviceId, FolderPath, FileName;
+Created
+| join kind=leftouter Deleted on DeviceId, FolderPath, FileName
+| extend DeletedWithin10Min = isnotnull(DeleteTime) and DeleteTime between (CreateTime .. (CreateTime + 10m))
+| summarize arg_max(toint(DeletedWithin10Min), *) by DeviceId, FolderPath, FileName, CreateTime
+| project CreateTime, DeviceName, FolderPath, FileName, Writer, WriterCmd, DeletedWithin10Min, SHA1
+| order by DeletedWithin10Min desc, CreateTime desc

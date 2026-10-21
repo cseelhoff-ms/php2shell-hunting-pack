@@ -1,0 +1,17 @@
+// Row 4b - Registry images that contain ANY PHP finding/package (works even if no detection for the new CVEs exists yet)
+// WHERE: portal.azure.com > Resource Graph Explorer > Scope "Directory" > paste > Run query
+// IDEA : every scanned image has sub-assessments for its vulnerable packages. An image with any PHP-related finding contains
+//        PHP; the image tag/digest then goes to the owner for a rebuild on a fixed PHP version.
+// LIMIT: only images with at least one finding in a php-related package appear. A fully patched PHP image with zero findings
+//        will not appear; the Trivy/Syft sweep in docs/container-sbom-sweep.md covers that.
+securityresources
+| where type == "microsoft.security/assessments/subassessments"
+| where tostring(properties.additionalData) matches regex @"(?i)\bphp([\d.]*|[-_][a-z0-9]+)\b|libphp|mod_php"
+| parse id with registryResourceId "/providers/Microsoft.Security/assessments/" assessmentKey "/subassessments/" *
+| where registryResourceId has "/providers/Microsoft.ContainerRegistry/registries/"
+| parse registryResourceId with * "/providers/Microsoft.ContainerRegistry/registries/" registryName
+| extend repository = tostring(properties.additionalData.repositoryName),
+         imageDigest = tostring(properties.additionalData.imageDigest)
+| summarize FindingCount = count(), SampleFindings = make_set(tostring(properties.displayName), 5)
+    by registryName, repository, imageDigest, subscriptionId, resourceGroup
+| order by FindingCount desc

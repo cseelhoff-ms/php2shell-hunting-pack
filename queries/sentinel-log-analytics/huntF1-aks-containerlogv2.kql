@@ -1,0 +1,29 @@
+// HUNT F - Container stdout/stderr (AKS ContainerLogV2): PHP memory / fatal / worker-churn errors
+//
+// PREREQUISITE: AKS Container Insights enabled with the ContainerLogV2 schema, sending to your Log Analytics workspace.
+//   portal.azure.com > Kubernetes services > <cluster> > Monitoring > Insights > Monitor Settings (or Configure monitoring)
+//   > enable Container Insights > Logs schema = ContainerLogV2 (table: ContainerLogV2).
+// PHP images (php:*-apache, php:*-fpm, WordPress, etc.) write errors to stderr, which lands here ONLY if the app logs to
+//   stderr (php-fpm: `catch_workers_output = yes`, `error_log = /proc/self/fd/2`; Apache images already log to stderr).
+//
+// WHERE TO RUN: security.microsoft.com > Investigation & response > Hunting > Advanced hunting
+//               (or Log Analytics workspace > Logs, or AKS cluster > Monitoring > Logs).
+//
+// LogMessage is dynamic: tostring() it before string operators.
+ContainerLogV2
+| where TimeGenerated > ago(14d)
+| extend Msg = tostring(LogMessage)
+| extend Signal = case(
+    Msg matches regex @"(?i)Allowed memory size of \d+ bytes exhausted", "PHP memory_limit exhausted",
+    Msg matches regex @"(?i)Out of memory \(allocated", "PHP out of memory",
+    Msg matches regex @"(?i)Maximum execution time of \d+ seconds? exceeded", "PHP max_execution_time exceeded",
+    Msg matches regex @"(?i)child \d+ exited on signal \d+", "php-fpm child exited on signal",
+    Msg matches regex @"(?i)child \d+ exited with code \d+ after [\d.]+ seconds from start", "php-fpm child exited right after start",
+    Msg matches regex @"(?i)child pid \d+ exit signal", "Apache child exited on signal",
+    Msg matches regex @"(?i)PHP (Fatal error|Warning|Deprecated).*(upload_progress|session)", "PHP session/upload_progress diagnostic",
+    "")
+| where isnotempty(Signal)
+| summarize Events = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+            Sample = take_any(substring(Msg, 0, 300)), Containers = make_set(ContainerName, 5)
+    by PodNamespace, PodName, Signal, bin(TimeGenerated, 1h)
+| order by Events desc

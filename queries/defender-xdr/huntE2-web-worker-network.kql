@@ -1,0 +1,17 @@
+// HUNT E2 - Outbound network connections made by web workers, or by shells/downloaders whose parent is a web worker
+// WHERE: security.microsoft.com > Investigation & response > Hunting > Advanced hunting
+// WHY  : reverse shells and payload downloads after PHP2Shell RCE. PHP legitimately calls APIs on 443/80 and databases on
+//        private IPs, so Part A excludes those; Part B (child of web worker) is high-signal on any port.
+let WebWorkerRegex = @"(?i)^(php-fpm[\d.]*|php-cgi(\.exe)?|php(\.exe)?|lsphp[\d]*|litespeed|lshttpd|frankenphp|apache2|apache(\.exe)?|httpd(\.exe)?|w3wp\.exe)$";
+let ChildTools = dynamic(["sh", "bash", "dash", "zsh", "python", "python3", "perl", "ruby", "curl", "wget", "nc", "ncat", "netcat", "socat", "cmd.exe", "powershell.exe", "pwsh.exe", "certutil.exe", "bitsadmin.exe"]);
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where ActionType in ("ConnectionSuccess", "ConnectionAttempt", "ConnectionFailed")
+| where RemoteIPType == "Public"
+| extend PartA_WorkerDirect = InitiatingProcessFileName matches regex WebWorkerRegex and RemotePort !in (80, 443, 53, 25, 465, 587)
+| extend PartB_ChildOfWorker = tolower(InitiatingProcessFileName) in (ChildTools) and InitiatingProcessParentFileName matches regex WebWorkerRegex
+| where PartA_WorkerDirect or PartB_ChildOfWorker
+| project Timestamp, DeviceName, Signal = iff(PartB_ChildOfWorker, "B: shell/tool spawned by web worker", "A: web worker direct to unusual public port"),
+          Process = InitiatingProcessFileName, ProcessCmd = InitiatingProcessCommandLine, Parent = InitiatingProcessParentFileName,
+          RemoteIP, RemotePort, RemoteUrl, ActionType, DeviceId, ReportId
+| order by Signal asc, Timestamp desc

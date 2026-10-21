@@ -1,0 +1,19 @@
+// 03 - PHP binaries/modules found on disk by MDE software evidence (catches PHP bundled inside other products)
+// WHERE: security.microsoft.com > Investigation & response > Hunting > Advanced hunting
+// CAVEAT: DeviceTvmSoftwareEvidenceBeta is a beta table (name/schema may change). It only lists software TVM already
+//         recognises, so a PHP embedded in an unrecognised appliance/product will not appear - use Row 9 for that.
+DeviceTvmSoftwareEvidenceBeta
+| mv-expand DiskPath = DiskPaths to typeof(string)
+| where DiskPath matches regex @"(?i)(libphp[\d.]*\.so|php[\d.]*-?fpm|php[\d.]*-cgi|php-cgi(\.exe)?|php\d*apache2[_\d]*\.dll|php\d+(ts)?\.dll|[\\/]php(\.exe)?$|[\\/]php\d+(\.\d+)?$)"
+| summarize
+    Paths = make_set(DiskPath, 20),
+    SoftwareNames = make_set(SoftwareName),
+    SoftwareVersions = make_set(SoftwareVersion)
+    by DeviceId
+| join kind=leftouter (
+    DeviceInfo
+    | summarize arg_max(Timestamp, DeviceName, OSPlatform) by DeviceId
+    | project DeviceId, DeviceName, OSPlatform
+  ) on DeviceId
+| project DeviceName, OSPlatform, SoftwareNames, SoftwareVersions, Paths, DeviceId
+| order by DeviceName asc
